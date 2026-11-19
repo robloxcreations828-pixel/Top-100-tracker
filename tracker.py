@@ -87,14 +87,14 @@ def chunks(seq, n):
 
 
 # ---------------------------------------------------------------- roblox
-def fetch_top(sort_id=SORT_ID, device="computer", country="all"):
+def fetch_top(sort_id=SORT_ID, device="computer", country="all", tries=4):
     """Top N games of the chosen sort, in rank order (sponsored slots removed)."""
     games, token, seen = [], None, set()
     for _ in range(5):
         q = {"sessionId": SESSION, "sortId": sort_id, "device": device, "country": country}
         if token:
             q["pageToken"] = token
-        res = http("https://apis.roblox.com/explore-api/v1/get-sort-content?" + urllib.parse.urlencode(q))
+        res = http("https://apis.roblox.com/explore-api/v1/get-sort-content?" + urllib.parse.urlencode(q), tries=tries)
         for g in res.get("games", []):
             uid = g.get("universeId")
             if not uid or g.get("isSponsored") or uid in seen:
@@ -109,7 +109,9 @@ def fetch_top(sort_id=SORT_ID, device="computer", country="all"):
 
 POOL_SORTS = ["top-playing-now", "top-trending", "up-and-coming"]
 POOL_DEVICES = ["computer", "phone"]
-POOL_COUNTRIES = env("POOL_COUNTRIES", "all,us,gb,ie,br,mx,ph,id,de,fr").split(",")
+POOL_COUNTRIES = env("POOL_COUNTRIES", "us,gb,br,ph,de").split(",")
+WIDE_SCAN_MINUTES = env("WIDE_SCAN_MINUTES", 30)   # how often to re-scan other countries/devices
+WIDE_SCAN_BUDGET_SEC = env("WIDE_SCAN_BUDGET_SEC", 60)
 
 
 def walk_games(obj, out):
@@ -124,28 +126,46 @@ def walk_games(obj, out):
             walk_games(v, out)
 
 
-def fetch_new_played():
+def fetch_new_played(st):
     """Most-played games created in the last NEW_LIST_MAX_AGE_DAYS days.
     Roblox's lists are only ~100 deep, so pool every list on the home page,
     keep the young games and rank them by live players."""
     pool = {}
+    cache = st.setdefault("pool", {"refreshedAt": 0, "ids": []})
     try:
         res = http("https://apis.roblox.com/explore-api/v1/get-sorts?" + urllib.parse.urlencode(
             {"sessionId": SESSION, "device": "computer", "country": "all"}))
         walk_games(res, pool)
     except Exception as e:
         print("home page sorts failed:", e)
-    for sid in POOL_SORTS:
-        for device in POOL_DEVICES:
-            for country in POOL_COUNTRIES:
-                try:
-                    for g in fetch_top(sid, device, country.strip()):
-                        pool.setdefault(g["universeId"], g)
-                except Exception as e:
-                    print(f"sort {sid}/{device}/{country} failed:", e)
+    for sid in POOL_SORTS:  # main lists, every run
+        try:
+            for g in fetch_top(sid):
+                pool.setdefault(g["universeId"], g)
+        except Exception as e:
+            print(f"sort {sid} failed:", e)
+    if NOW - cache["refreshedAt"] > WIDE_SCAN_MINUTES * 60:  # wider scan, every 30 min, time-limited
+        start, n = time.time(), 0
+        for sid in POOL_SORTS:
+            for device in POOL_DEVICES:
+                for country in ["all"] + [c.strip() for c in POOL_COUNTRIES if c.strip()]:
+                    if (device, country) == ("computer", "all") or time.time() - start > WIDE_SCAN_BUDGET_SEC:
+                        continue
+                    try:
+                        for g in fetch_top(sid, device, country, tries=1):
+                            pool.setdefault(g["universeId"], g)
+                        n += 1
+                    except Exception as e:
+                        print(f"wide scan {sid}/{device}/{country} skipped:", e)
+                    time.sleep(0.5)
+        cache["refreshedAt"] = NOW
+        print(f"wide scan: {n} lists in {time.time() - start:.0f}s")
+    for uid in cache["ids"]:  # young games found by earlier scans: re-check their live players
+        pool.setdefault(uid, {"universeId": uid})
     games = enrich(list(pool.values()), icons=False)
     young = [g for g in games if (age_days(g) is not None and age_days(g) <= NEW_LIST_MAX_AGE_DAYS)]
     young.sort(key=lambda g: -g["players"])
+    cache["ids"] = [g["universeId"] for g in young[:500]]
     young = young[:TOP_N]
     add_icons(young)
     for i, g in enumerate(young, 1):
@@ -433,9 +453,10 @@ def build_alert(g, reason, similar):
             "similar": similar, "ageText": age_text(g), "kind": "spike"}
 
 
+STATE = {}
 LISTS = [
     ("trending", "Top Trending", lambda: enrich(fetch_top())),
-    ("newPlayed", f"New & Most Played (under {NEW_LIST_MAX_AGE_DAYS:g} days)", fetch_new_played),
+    ("newPlayed", f"New & Most Played (under {NEW_LIST_MAX_AGE_DAYS:g} days)", lambda: fetch_new_played(STATE)),
 ]
 
 
@@ -525,7 +546,8 @@ def main():
     dry = "--dry-run" in sys.argv
     os.makedirs(DATA_DIR, exist_ok=True)
     state_path = os.path.join(DATA_DIR, "state.json")
-    st = load(state_path, {})
+    global STATE
+    st = STATE = load(state_path, {})
     st.setdefault("lists", {})
     st.setdefault("alerts", [])
     st.setdefault("lastAlert", {})   # shared by all lists so a game only alerts once
