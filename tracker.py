@@ -49,6 +49,7 @@ WATCH_HOURS = env("WATCH_HOURS", 24.0)            # a game counts as "new" this 
 NEW_LOOKBACK_DAYS = env("NEW_LOOKBACK_DAYS", 7.0) # not in the top 100 for this long = new
 ALERT_COOLDOWN_HOURS = env("ALERT_COOLDOWN_HOURS", 6.0)
 HISTORY_HOURS = env("HISTORY_HOURS", 24.0)
+MAX_AGE_DAYS = env("MAX_AGE_DAYS", 30.0)          # only alert for games created this recently (0 = off)
 SIMILAR_THRESHOLD = env("SIMILAR_THRESHOLD", 0.6)
 SEARCH_PAGES = env("SEARCH_PAGES", 3)             # ~40 results per page
 DASHBOARD_URL = env("DASHBOARD_URL", "")
@@ -224,6 +225,23 @@ def is_spike(game, hist, entered_at):
     return None
 
 
+def age_days(game):
+    """Days since the game was first created/uploaded, or None if unknown."""
+    try:
+        from datetime import datetime
+        c = datetime.fromisoformat(game["created"].replace("Z", "+00:00"))
+        return (NOW - c.timestamp()) / 86400
+    except Exception:
+        return None
+
+
+def young_enough(game):
+    if MAX_AGE_DAYS <= 0:
+        return True
+    age = age_days(game)
+    return age is not None and age <= MAX_AGE_DAYS
+
+
 # ---------------------------------------------------------------- alerts
 def game_url(g):
     return f"https://www.roblox.com/games/{g.get('placeId') or ''}"
@@ -237,6 +255,7 @@ def alert_text(a):
     lines = [f"{a['name']} is blowing up!",
              f"Growth: {a['reason']}",
              f"Players now: {a['players']:,}  |  Rank #{a['rank']} in {SORT_ID}",
+             f"Uploaded: {a['ageText']}",
              f"Similar names: {sim}"]
     if s.get("examples"):
         lines.append("Look-alikes: " + "; ".join(f"{x['name']} ({x['players']:,})" for x in s["examples"][:3]))
@@ -253,6 +272,7 @@ def send_discord(a):
         {"name": "Growth", "value": a["reason"], "inline": False},
         {"name": "Players now", "value": f"{a['players']:,}", "inline": True},
         {"name": "Rank", "value": f"#{a['rank']}", "inline": True},
+        {"name": "Uploaded", "value": a["ageText"], "inline": True},
         {"name": "Similar names", "value": "?" if s.get("count") is None else
          f"**{s['count']}** found ({s['inTop']} in top {TOP_N})", "inline": True},
     ]
@@ -330,10 +350,17 @@ def save(path, obj):
     os.replace(tmp, path)
 
 
+def age_text(g):
+    d = age_days(g)
+    if d is None:
+        return "unknown"
+    return f"{d * 24:.0f} hours ago" if d < 2 else f"{d:.0f} days ago"
+
+
 def build_alert(g, reason, similar):
     return {"time": NOW, "universeId": g["universeId"], "name": g["name"], "players": g["players"],
             "rank": g["rank"], "reason": reason, "url": game_url(g), "icon": g.get("icon"),
-            "similar": similar}
+            "similar": similar, "ageText": age_text(g)}
 
 
 def main():
@@ -386,6 +413,9 @@ def main():
             g["similar"] = cached
             reason = is_spike(g, hist, entered)
             last = st["lastAlert"].get(uid, 0)
+            if reason and not young_enough(g):
+                print(f"Skipped alert for {g['name']}: created {g.get('created')} (older than {MAX_AGE_DAYS:g} days)")
+                reason = None
             if reason and NOW - last > ALERT_COOLDOWN_HOURS * 3600:
                 a = build_alert(g, reason, find_similar(g, top))  # fresh count for the alert
                 st["similar"][uid] = a["similar"]
@@ -424,7 +454,8 @@ def main():
     save(os.path.join(DATA_DIR, "data.json"), {
         "updatedAt": NOW, "sort": SORT_ID, "topN": TOP_N,
         "settings": {"minPlayers": MIN_PLAYERS, "spikePct": SPIKE_PCT, "spikeWindowMin": SPIKE_WINDOW_MIN,
-                     "spikeMinGain": SPIKE_MIN_GAIN, "watchHours": WATCH_HOURS},
+                     "spikeMinGain": SPIKE_MIN_GAIN, "watchHours": WATCH_HOURS,
+                     "maxAgeDays": MAX_AGE_DAYS},
         "games": top, "alerts": st["alerts"][:100],
     })
     print(f"OK: {len(top)} games, {sum(g['isNew'] for g in top)} new, {len(new_alerts)} alerts"

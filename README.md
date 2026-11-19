@@ -10,7 +10,8 @@ Runs 24/7 for free on GitHub. About every 5 minutes it checks Roblox's **Top Tre
 A game sends an alert when **all** of these are true:
 1. It is **new** to the top 100: it wasn't in the list at any time in the last 7 days, and it entered within the last 24 hours.
 2. It has at least **1,000 players**.
-3. Its players grew **+50% or more within 60 minutes** (at least +500 players), **or** they have **doubled since it entered** the top 100.
+3. The game was **uploaded (created) in the last 30 days**.
+4. Its players grew **+50% or more within 60 minutes** (at least +500 players), **or** they have **doubled since it entered** the top 100.
 
 Each game sends at most one alert every 6 hours. The first run only records a baseline, so games that are already in the list don't count as new.
 
@@ -61,6 +62,7 @@ To change the defaults, go to **Settings → Secrets and variables → Actions �
 | `SPIKE_PCT` | `50` | % growth needed inside the time window |
 | `SPIKE_WINDOW_MIN` | `60` | The time window, in minutes |
 | `SPIKE_MIN_GAIN` | `500` | Minimum number of extra players |
+| `MAX_AGE_DAYS` | `30` | Only alert for games created within this many days (`0` = any age) |
 | `WATCH_HOURS` | `24` | How long after entering the list a game still counts as "new" |
 
 If you get too many alerts, raise `SPIKE_PCT` or `MIN_PLAYERS`. If you get too few, lower them.
