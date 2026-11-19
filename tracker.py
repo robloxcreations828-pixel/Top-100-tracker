@@ -53,7 +53,9 @@ NEW_LIST_MAX_AGE_DAYS = env("NEW_LIST_MAX_AGE_DAYS", 30.0)  # age limit for the 
 ENTRY_ALERT_MAX_AGE_DAYS = env("ENTRY_ALERT_MAX_AGE_DAYS", 10.0)  # alert as soon as a game this young enters a list (0 = off)
 MAX_AGE_DAYS = env("MAX_AGE_DAYS", 30.0)          # only alert for games created this recently (0 = off)
 SIMILAR_THRESHOLD = env("SIMILAR_THRESHOLD", 0.6)
-SEARCH_PAGES = env("SEARCH_PAGES", 3)             # ~40 results per page
+SEARCH_PAGES = env("SEARCH_PAGES", 3)
+SIMILAR_LOOKUPS_PER_RUN = env("SIMILAR_LOOKUPS_PER_RUN", 4)  # extra lookups for the dashboard (alerts always get one)
+_lookups = {"left": 0}             # ~40 results per page
 DASHBOARD_URL = env("DASHBOARD_URL", "")
 
 UA = "Mozilla/5.0 (compatible; RobloxTrendTracker/1.0)"
@@ -256,7 +258,7 @@ def find_similar(game, top_games):
             q["pageToken"] = token
             time.sleep(2)  # Roblox rate-limits rapid search paging
         try:
-            res = http("https://apis.roblox.com/search-api/omni-search?" + urllib.parse.urlencode(q))
+            res = http("https://apis.roblox.com/search-api/omni-search?" + urllib.parse.urlencode(q), tries=2)
         except Exception as e:
             print("search failed:", e)
             break
@@ -456,7 +458,7 @@ def build_alert(g, reason, similar):
 STATE = {}
 LISTS = [
     ("trending", "Top Trending", lambda: enrich(fetch_top())),
-    ("newPlayed", f"New & Most Played (under {NEW_LIST_MAX_AGE_DAYS:g} days)", lambda: fetch_new_played(STATE)),
+    ("newPlayed2", f"New & Most Played (under {NEW_LIST_MAX_AGE_DAYS:g} days)", lambda: fetch_new_played(STATE)),
 ]
 
 
@@ -501,7 +503,8 @@ def process_list(key, title, top, ls, last_alert, run_alerts):
 
         if g["isNew"]:
             cached = ls["similar"].get(uid)
-            if not cached or NOW - cached.get("checkedAt", 0) > 6 * 3600:
+            if (not cached or NOW - cached.get("checkedAt", 0) > 6 * 3600) and _lookups["left"] > 0:
+                _lookups["left"] -= 1
                 ls["similar"][uid] = cached = find_similar(g, top)
             g["similar"] = cached
             reason = is_spike(g, hist, entered)
@@ -567,6 +570,8 @@ def main():
         return
 
     lists_out, new_alerts, run_alerts = {}, [], {}
+    _lookups["left"] = SIMILAR_LOOKUPS_PER_RUN
+    st["lists"].pop("newPlayed", None)  # one-off: restart the new list's baseline with the wider pool
     for key, title, fetch in LISTS:
         try:
             top = fetch()
