@@ -52,6 +52,7 @@ jobs:
           SPIKE_MIN_GAIN: ${{ vars.SPIKE_MIN_GAIN }}
           WATCH_HOURS: ${{ vars.WATCH_HOURS }}
           MAX_AGE_DAYS: ${{ vars.MAX_AGE_DAYS }}
+          NEW_LIST_MAX_AGE_DAYS: ${{ vars.NEW_LIST_MAX_AGE_DAYS }}
         run: python tracker.py ${{ inputs.test_alert && '--test-alert' || '' }}
 
       - name: Save data (one commit, overwritten each run)

@@ -1,6 +1,10 @@
 # 🚀 Roblox Trend Tracker
 
-Runs 24/7 for free on GitHub. About every 5 minutes it checks Roblox's **Top Trending** top 100. When a **new game enters the top 100** and its player count **grows massively in a short time**, it alerts you and tells you **how many other games have a similar name**.
+Runs 24/7 for free on GitHub. About every 5 minutes it checks two lists:
+- **Top Trending:** Roblox's top 100 trending games
+- **New & Most Played:** the most-played games created in the last 30 days. Roblox's own lists only go ~100 deep, so the tracker pools every game on the Roblox home page, keeps the ones under 30 days old and ranks them by live players. This list can hold fewer than 100 games.
+
+Both lists use the same alert rules, and a game in both lists only alerts once. When a **new game enters the top 100** and its player count **grows massively in a short time**, it alerts you and tells you **how many other games have a similar name**.
 
 - **Alerts:** Discord, email, and phone push notifications (through the free ntfy app)
 - **Dashboard:** a live web page with the top 100, 1-hour growth, sparklines, new entries and the alert history
@@ -62,6 +66,7 @@ To change the defaults, go to **Settings → Secrets and variables → Actions �
 | `SPIKE_PCT` | `50` | % growth needed inside the time window |
 | `SPIKE_WINDOW_MIN` | `60` | The time window, in minutes |
 | `SPIKE_MIN_GAIN` | `500` | Minimum number of extra players |
+| `NEW_LIST_MAX_AGE_DAYS` | `30` | Age limit for the New & Most Played list |
 | `MAX_AGE_DAYS` | `30` | Only alert for games created within this many days (`0` = any age) |
 | `WATCH_HOURS` | `24` | How long after entering the list a game still counts as "new" |
 

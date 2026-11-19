@@ -49,6 +49,7 @@ WATCH_HOURS = env("WATCH_HOURS", 24.0)            # a game counts as "new" this 
 NEW_LOOKBACK_DAYS = env("NEW_LOOKBACK_DAYS", 7.0) # not in the top 100 for this long = new
 ALERT_COOLDOWN_HOURS = env("ALERT_COOLDOWN_HOURS", 6.0)
 HISTORY_HOURS = env("HISTORY_HOURS", 24.0)
+NEW_LIST_MAX_AGE_DAYS = env("NEW_LIST_MAX_AGE_DAYS", 30.0)  # age limit for the "new & most played" list
 MAX_AGE_DAYS = env("MAX_AGE_DAYS", 30.0)          # only alert for games created this recently (0 = off)
 SIMILAR_THRESHOLD = env("SIMILAR_THRESHOLD", 0.6)
 SEARCH_PAGES = env("SEARCH_PAGES", 3)             # ~40 results per page
@@ -85,11 +86,11 @@ def chunks(seq, n):
 
 
 # ---------------------------------------------------------------- roblox
-def fetch_top():
+def fetch_top(sort_id=SORT_ID):
     """Top N games of the chosen sort, in rank order (sponsored slots removed)."""
     games, token, seen = [], None, set()
     for _ in range(5):
-        q = {"sessionId": SESSION, "sortId": SORT_ID, "device": "computer", "country": "all"}
+        q = {"sessionId": SESSION, "sortId": sort_id, "device": "computer", "country": "all"}
         if token:
             q["pageToken"] = token
         res = http("https://apis.roblox.com/explore-api/v1/get-sort-content?" + urllib.parse.urlencode(q))
@@ -105,17 +106,52 @@ def fetch_top():
     return games[:TOP_N]
 
 
-def enrich(games):
-    """Add exact live player count, visits, creator, created date and icon."""
-    ids = [g["universeId"] for g in games]
-    details, icons = {}, {}
-    for part in chunks(ids, 50):
+POOL_SORTS = ["top-playing-now", "top-trending", "up-and-coming"]
+
+
+def walk_games(obj, out):
+    """Collect every game-like object anywhere in a JSON response."""
+    if isinstance(obj, dict):
+        if obj.get("universeId") and obj.get("name") and not obj.get("isSponsored"):
+            out.setdefault(obj["universeId"], obj)
+        for v in obj.values():
+            walk_games(v, out)
+    elif isinstance(obj, list):
+        for v in obj:
+            walk_games(v, out)
+
+
+def fetch_new_played():
+    """Most-played games created in the last NEW_LIST_MAX_AGE_DAYS days.
+    Roblox's lists are only ~100 deep, so pool every list on the home page,
+    keep the young games and rank them by live players."""
+    pool = {}
+    try:
+        res = http("https://apis.roblox.com/explore-api/v1/get-sorts?" + urllib.parse.urlencode(
+            {"sessionId": SESSION, "device": "computer", "country": "all"}))
+        walk_games(res, pool)
+    except Exception as e:
+        print("home page sorts failed:", e)
+    for sid in POOL_SORTS:
         try:
-            res = http("https://games.roblox.com/v1/games?universeIds=" + ",".join(map(str, part)))
-            for d in res.get("data", []):
-                details[d["id"]] = d
+            for g in fetch_top(sid):
+                pool.setdefault(g["universeId"], g)
         except Exception as e:
-            print("details lookup failed:", e)
+            print(f"sort {sid} failed:", e)
+    games = enrich(list(pool.values()), icons=False)
+    young = [g for g in games if (age_days(g) is not None and age_days(g) <= NEW_LIST_MAX_AGE_DAYS)]
+    young.sort(key=lambda g: -g["players"])
+    young = young[:TOP_N]
+    add_icons(young)
+    for i, g in enumerate(young, 1):
+        g["rank"] = i
+    print(f"new & most played: {len(pool)} games pooled, {len(young)} created in the last {NEW_LIST_MAX_AGE_DAYS:g} days")
+    return young
+
+
+def add_icons(games):
+    icons = {}
+    for part in chunks([g["universeId"] for g in games], 50):
         try:
             res = http("https://thumbnails.roblox.com/v1/games/icons?" + urllib.parse.urlencode({
                 "universeIds": ",".join(map(str, part)), "size": "150x150", "format": "Png",
@@ -124,6 +160,21 @@ def enrich(games):
                 icons[d["targetId"]] = d.get("imageUrl")
         except Exception as e:
             print("icon lookup failed:", e)
+    for g in games:
+        g["icon"] = icons.get(g["universeId"])
+
+
+def enrich(games, icons=True):
+    """Add exact live player count, visits, creator, created date and icon."""
+    ids = [g["universeId"] for g in games]
+    details = {}
+    for part in chunks(ids, 50):
+        try:
+            res = http("https://games.roblox.com/v1/games?universeIds=" + ",".join(map(str, part)))
+            for d in res.get("data", []):
+                details[d["id"]] = d
+        except Exception as e:
+            print("details lookup failed:", e)
     out = []
     for rank, g in enumerate(games, 1):
         d = details.get(g["universeId"], {})
@@ -137,10 +188,12 @@ def enrich(games):
             "created": d.get("created"),
             "creator": (d.get("creator") or {}).get("name"),
             "genre": g.get("genreL1"),
-            "icon": icons.get(g["universeId"]),
+            "icon": None,
             "likes": g.get("totalUpVotes"),
             "dislikes": g.get("totalDownVotes"),
         })
+    if icons:
+        add_icons(out)
     return out
 
 
@@ -222,7 +275,7 @@ def is_spike(game, hist, entered_at):
         return f"+{w['pct']:.0f}% in {w['minutes']} min ({w['from']:,} → {w['to']:,})"
     e = growth(hist, entered_at - 1)
     if e and e["from"] and e["to"] >= 2 * e["from"] and e["gain"] >= SPIKE_MIN_GAIN:
-        return f"{e['to'] / e['from']:.1f}× since entering the top {TOP_N} ({e['from']:,} → {e['to']:,})"
+        return f"{e['to'] / e['from']:.1f}× since entering the list ({e['from']:,} → {e['to']:,})"
     return None
 
 
@@ -252,10 +305,10 @@ def alert_text(a):
     s = a["similar"]
     sim = ("unknown (name not searchable)" if s.get("count") is None else
            f"{s['count']} similar names found (out of {s['scanned']} search results), "
-           f"{s['inTop']} also in the top {TOP_N}")
+           f"{s['inTop']} also in this top list")
     lines = [f"{a['name']} is blowing up!",
              f"Growth: {a['reason']}",
-             f"Players now: {a['players']:,}  |  Rank #{a['rank']} in {SORT_ID}",
+             f"Players now: {a['players']:,}  |  Rank #{a['rank']} in {a.get('listTitle', SORT_ID)}",
              f"Uploaded: {a['ageText']}",
              f"Similar names: {sim}"]
     if s.get("examples"):
@@ -272,10 +325,10 @@ def send_discord(a):
     fields = [
         {"name": "Growth", "value": a["reason"], "inline": False},
         {"name": "Players now", "value": f"{a['players']:,}", "inline": True},
-        {"name": "Rank", "value": f"#{a['rank']}", "inline": True},
+        {"name": "Rank", "value": f"#{a['rank']} – {a.get('listTitle', '')}", "inline": True},
         {"name": "Uploaded", "value": a["ageText"], "inline": True},
         {"name": "Similar names", "value": "?" if s.get("count") is None else
-         f"**{s['count']}** found ({s['inTop']} in top {TOP_N})", "inline": True},
+         f"**{s['count']}** found ({s['inTop']} in this list)", "inline": True},
     ]
     if s.get("examples"):
         fields.append({"name": "Look-alikes", "inline": False, "value": "\n".join(
@@ -370,103 +423,130 @@ def build_alert(g, reason, similar):
             "similar": similar, "ageText": age_text(g)}
 
 
-def main():
-    dry = "--dry-run" in sys.argv
-    os.makedirs(DATA_DIR, exist_ok=True)
-    state_path = os.path.join(DATA_DIR, "state.json")
-    st = load(state_path, {})
-    st.setdefault("seen", {})        # uid -> {first, last, enteredAt}
-    st.setdefault("history", {})     # uid -> [[ts, players, rank], ...]
-    st.setdefault("lastAlert", {})   # uid -> ts
-    st.setdefault("similar", {})     # uid -> similar-name result (cached)
-    st.setdefault("alerts", [])
-    bootstrap = not st.get("bootstrapped")
+LISTS = [
+    ("trending", "Top Trending", lambda: enrich(fetch_top())),
+    ("newPlayed", f"New & Most Played (under {NEW_LIST_MAX_AGE_DAYS:g} days)", fetch_new_played),
+]
 
-    top = enrich(fetch_top())
-    if not top:
-        print("No games returned - Roblox API may have changed or blocked the request.")
-        sys.exit(1)
 
-    if "--test-alert" in sys.argv:
-        g = top[0]
-        a = build_alert(g, "TEST ALERT – this is what a real alert looks like", find_similar(g, top))
-        print(alert_text(a))
-        send_all(a)
-        return
-
-    new_alerts = []
+def process_list(key, title, top, ls, last_alert, run_alerts):
+    """Update one list's history; return its new spike alerts."""
+    for k in ("seen", "history", "similar"):
+        ls.setdefault(k, {})
+    bootstrap = not ls.get("bootstrapped")
+    alerts = []
     for g in top:
         uid = str(g["universeId"])
-        seen = st["seen"].get(uid)
+        seen = ls["seen"].get(uid)
         if bootstrap:  # first ever run: everything already there is not "new"
             seen = {"first": NOW, "last": NOW, "enteredAt": None}
         elif seen is None or NOW - seen["last"] > NEW_LOOKBACK_DAYS * 86400:
             seen = {"first": NOW, "last": NOW, "enteredAt": NOW}
         seen["last"] = NOW
-        st["seen"][uid] = seen
-        hist = st["history"].setdefault(uid, [])
+        ls["seen"][uid] = seen
+        hist = ls["history"].setdefault(uid, [])
         hist.append([round(NOW), g["players"], g["rank"]])
 
         entered = seen.get("enteredAt")
         g["isNew"] = bool(entered and NOW - entered <= WATCH_HOURS * 3600)
         g["enteredAt"] = entered
+        g["ageDays"] = None if age_days(g) is None else round(age_days(g), 1)
         g["growth1h"] = growth(hist, NOW - 3600 - 90)
         g["growthEntry"] = growth(hist, entered - 1) if entered else None
 
         if g["isNew"]:
-            cached = st["similar"].get(uid)
+            cached = ls["similar"].get(uid)
             if not cached or NOW - cached.get("checkedAt", 0) > 6 * 3600:
-                st["similar"][uid] = cached = find_similar(g, top)
+                ls["similar"][uid] = cached = find_similar(g, top)
             g["similar"] = cached
             reason = is_spike(g, hist, entered)
-            last = st["lastAlert"].get(uid, 0)
             if reason and not young_enough(g):
                 print(f"Skipped alert for {g['name']}: created {g.get('created')} (older than {MAX_AGE_DAYS:g} days)")
                 reason = None
-            if reason and NOW - last > ALERT_COOLDOWN_HOURS * 3600:
+            if reason and uid in run_alerts:  # already alerting from another list this run
+                run_alerts[uid]["listTitle"] += f" + {title}"
+                reason = None
+            if reason and NOW - last_alert.get(uid, 0) > ALERT_COOLDOWN_HOURS * 3600:
                 a = build_alert(g, reason, find_similar(g, top))  # fresh count for the alert
-                st["similar"][uid] = a["similar"]
-                g["similar"] = a["similar"]
-                st["lastAlert"][uid] = NOW
-                new_alerts.append(a)
+                a["list"], a["listTitle"] = key, title
+                ls["similar"][uid] = g["similar"] = a["similar"]
+                last_alert[uid] = NOW
+                run_alerts[uid] = a
+                alerts.append(a)
         else:
-            g["similar"] = st["similar"].get(uid)
+            g["similar"] = ls["similar"].get(uid)
 
     # prune old data
     cutoff = NOW - HISTORY_HOURS * 3600
-    for uid in list(st["history"]):
-        st["history"][uid] = [p for p in st["history"][uid] if p[0] >= cutoff]
-        if not st["history"][uid]:
-            del st["history"][uid]
-    for uid in list(st["seen"]):
-        if NOW - st["seen"][uid]["last"] > (NEW_LOOKBACK_DAYS + 1) * 86400:
-            st["seen"].pop(uid, None)
-            st["lastAlert"].pop(uid, None)
+    for uid in list(ls["history"]):
+        ls["history"][uid] = [p for p in ls["history"][uid] if p[0] >= cutoff]
+        if not ls["history"][uid]:
+            del ls["history"][uid]
+    for uid in list(ls["seen"]):
+        if NOW - ls["seen"][uid]["last"] > (NEW_LOOKBACK_DAYS + 1) * 86400:
+            ls["seen"].pop(uid, None)
     current = {str(g["universeId"]) for g in top}
-    for uid in list(st["similar"]):
-        if uid not in current and NOW - st["similar"][uid].get("checkedAt", 0) > 86400:
-            del st["similar"][uid]
+    for uid in list(ls["similar"]):
+        if uid not in current and NOW - ls["similar"][uid].get("checkedAt", 0) > 86400:
+            del ls["similar"][uid]
+    for g in top:
+        g["spark"] = [p[1] for p in ls["history"].get(str(g["universeId"]), [])][-72:]
+    ls["bootstrapped"] = True
+    print(f"{title}: {len(top)} games, {sum(g['isNew'] for g in top)} new, {len(alerts)} alerts"
+          + (" (first run - baseline saved)" if bootstrap else ""))
+    return alerts
+
+
+def main():
+    dry = "--dry-run" in sys.argv
+    os.makedirs(DATA_DIR, exist_ok=True)
+    state_path = os.path.join(DATA_DIR, "state.json")
+    st = load(state_path, {})
+    st.setdefault("lists", {})
+    st.setdefault("alerts", [])
+    st.setdefault("lastAlert", {})   # shared by all lists so a game only alerts once
+    if "seen" in st:  # migrate the old single-list state
+        st["lists"]["trending"] = {k: st.pop(k) for k in ("seen", "history", "similar", "bootstrapped") if k in st}
+    for uid in list(st["lastAlert"]):
+        if NOW - st["lastAlert"][uid] > 7 * 86400:
+            del st["lastAlert"][uid]
+
+    if "--test-alert" in sys.argv:
+        top = enrich(fetch_top())
+        g = top[0]
+        a = build_alert(g, "TEST ALERT – this is what a real alert looks like", find_similar(g, top))
+        a["listTitle"] = LISTS[0][1]
+        print(alert_text(a))
+        send_all(a)
+        return
+
+    lists_out, new_alerts, run_alerts = {}, [], {}
+    for key, title, fetch in LISTS:
+        try:
+            top = fetch()
+        except Exception as e:
+            print(f"{title} failed: {e}")
+            continue
+        if not top and key == "trending":
+            print("No games returned - Roblox API may have changed or blocked the request.")
+            sys.exit(1)
+        new_alerts += process_list(key, title, top, st["lists"].setdefault(key, {}), st["lastAlert"], run_alerts)
+        lists_out[key] = {"title": title, "games": top}
 
     st["alerts"] = (new_alerts + st["alerts"])[:200]
-    st["bootstrapped"] = True
-
     for a in new_alerts:
         print("ALERT:\n" + alert_text(a) + "\n")
         if not dry:
             send_all(a)
 
-    for g in top:
-        g["spark"] = [p[1] for p in st["history"].get(str(g["universeId"]), [])][-72:]
     save(state_path, st)
     save(os.path.join(DATA_DIR, "data.json"), {
-        "updatedAt": NOW, "sort": SORT_ID, "topN": TOP_N,
+        "updatedAt": NOW, "topN": TOP_N,
         "settings": {"minPlayers": MIN_PLAYERS, "spikePct": SPIKE_PCT, "spikeWindowMin": SPIKE_WINDOW_MIN,
                      "spikeMinGain": SPIKE_MIN_GAIN, "watchHours": WATCH_HOURS,
-                     "maxAgeDays": MAX_AGE_DAYS},
-        "games": top, "alerts": st["alerts"][:100],
+                     "maxAgeDays": MAX_AGE_DAYS, "newListMaxAgeDays": NEW_LIST_MAX_AGE_DAYS},
+        "lists": lists_out, "alerts": st["alerts"][:100],
     })
-    print(f"OK: {len(top)} games, {sum(g['isNew'] for g in top)} new, {len(new_alerts)} alerts"
-          + (" (first run - baseline saved)" if bootstrap else ""))
 
 
 if __name__ == "__main__":

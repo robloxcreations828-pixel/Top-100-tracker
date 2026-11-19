@@ -48,6 +48,10 @@
   .up { color: var(--up); } .down { color: var(--down); }
   .namecell { display: flex; gap: 10px; align-items: center; }
   svg.spark { display: block; }
+  .tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+  .tab { background: var(--panel); border: 1px solid var(--line); color: var(--dim); border-radius: 99px;
+         padding: 7px 14px; font: inherit; font-weight: 600; cursor: pointer; }
+  .tab.on { background: var(--accent); border-color: var(--accent); color: #fff; }
   .err { background: #ff6b6b1a; border: 1px solid #ff6b6b55; padding: 12px; border-radius: 10px; }
 </style>
 </head>
@@ -68,7 +72,8 @@
   <h2>Spike alerts <span class="pill hot">massive growth</span></h2>
   <div class="alerts" id="alerts"></div>
 
-  <h2>Top list</h2>
+  <h2>Top lists</h2>
+  <div class="tabs" id="tabs"></div>
   <div class="controls">
     <input id="q" placeholder="Search games…">
     <select id="sort">
@@ -82,7 +87,7 @@
     <table>
       <thead><tr>
         <th class="num">#</th><th>Game</th><th class="num">Players</th>
-        <th class="num">1h growth</th><th>Last few hours</th><th class="num">Similar names</th>
+        <th class="num">1h growth</th><th>Last few hours</th><th class="num">Age</th><th class="num">Similar names</th>
       </tr></thead>
       <tbody id="rows"></tbody>
     </table>
@@ -118,12 +123,14 @@ function growthCell(gr) {
   return `<span class="${cls}">${gr.pct > 0 ? "+" : ""}${gr.pct}%</span>`;
 }
 
-let DATA = null;
+let DATA = null, TAB = params.get("list") || "trending";
+const listGames = () => (DATA.lists?.[TAB]?.games) || DATA.games || [];
+const ageText = d => d == null ? "–" : d < 2 ? `${Math.round(d*24)}h` : `${Math.round(d)}d`;
 function render() {
   if (!DATA) return;
   const q = document.getElementById("q").value.toLowerCase();
   const mode = document.getElementById("sort").value;
-  let games = DATA.games.filter(g => g.name.toLowerCase().includes(q));
+  let games = listGames().filter(g => g.name.toLowerCase().includes(q));
   const pct = g => g.growth1h?.pct ?? -1e9;
   if (mode === "growth") games.sort((a, b) => pct(b) - pct(a));
   if (mode === "players") games.sort((a, b) => b.players - a.players);
@@ -141,18 +148,25 @@ function render() {
       <td class="num">${fmt(g.players)}</td>
       <td class="num">${growthCell(g.growth1h)}</td>
       <td>${spark(g.spark)}</td>
+      <td class="num ${g.ageDays != null && g.ageDays <= 30 ? "up" : "muted"}">${ageText(g.ageDays)}</td>
       <td class="num">${g.similar ? (g.similar.count == null ? "?" : `<b>${g.similar.count}</b>`) : '<span class="muted">–</span>'}</td>
     </tr>`).join("");
 }
 
 function renderStatic() {
   const d = DATA, now = Date.now()/1000;
+  const lists = d.lists || {trending: {title: "Top Trending", games: d.games}};
+  if (!lists[TAB]) TAB = Object.keys(lists)[0];
+  document.getElementById("tabs").innerHTML = Object.entries(lists).map(([k, l]) =>
+    `<button class="tab ${k === TAB ? "on" : ""}" data-k="${k}">${esc(l.title)} (${l.games.length})</button>`).join("");
+  document.querySelectorAll(".tab").forEach(b => b.onclick = () => { TAB = b.dataset.k; renderStatic(); render(); });
+  const games = listGames();
   document.getElementById("updated").textContent =
-    `${d.sort} · updated ${ago(d.updatedAt)} (${new Date(d.updatedAt*1000).toLocaleTimeString()})`;
-  document.getElementById("t-count").textContent = d.games.length;
-  document.getElementById("t-new").textContent = d.games.filter(g => g.isNew).length;
+    `updated ${ago(d.updatedAt)} (${new Date(d.updatedAt*1000).toLocaleTimeString()})`;
+  document.getElementById("t-count").textContent = games.length;
+  document.getElementById("t-new").textContent = games.filter(g => g.isNew).length;
   document.getElementById("t-alerts").textContent = d.alerts.filter(a => now - a.time < 86400).length;
-  document.getElementById("t-players").textContent = fmt(d.games.reduce((s, g) => s + g.players, 0));
+  document.getElementById("t-players").textContent = fmt(games.reduce((s, g) => s + g.players, 0));
 
   const el = document.getElementById("alerts");
   el.innerHTML = d.alerts.length ? d.alerts.slice(0, 20).map(a => {
@@ -162,10 +176,10 @@ function renderStatic() {
     return `<div class="alert">
       ${a.icon ? `<img src="${esc(a.icon)}" width="52" height="52" alt="">` : ""}
       <div><a href="${esc(a.url)}" target="_blank" rel="noopener">${esc(a.name)}</a>
-        <span class="muted"> · ${ago(a.time)} · rank #${a.rank} · ${fmt(a.players)} playing</span>
+        <span class="muted"> · ${ago(a.time)} · #${a.rank} in ${esc(a.listTitle || "Top Trending")} · ${fmt(a.players)} playing${a.ageText ? ` · uploaded ${esc(a.ageText)}` : ""}</span>
         <div class="why">${esc(a.reason)}</div>
         <div><b>${s.count == null ? "?" : s.count}</b> games with similar names
-          <span class="muted">(${s.inTop ?? 0} in the top list, from ${s.scanned ?? 0} search results)</span></div>
+          <span class="muted">(${s.inTop ?? 0} in that list, from ${s.scanned ?? 0} search results)</span></div>
         ${looks ? `<div class="looks muted">Look-alikes: ${looks}</div>` : ""}
       </div></div>`;
   }).join("") : '<div class="empty">No spikes yet. New games that grow fast will show up here.</div>';
