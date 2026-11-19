@@ -50,6 +50,7 @@ NEW_LOOKBACK_DAYS = env("NEW_LOOKBACK_DAYS", 7.0) # not in the top 100 for this 
 ALERT_COOLDOWN_HOURS = env("ALERT_COOLDOWN_HOURS", 6.0)
 HISTORY_HOURS = env("HISTORY_HOURS", 24.0)
 NEW_LIST_MAX_AGE_DAYS = env("NEW_LIST_MAX_AGE_DAYS", 30.0)  # age limit for the "new & most played" list
+ENTRY_ALERT_MAX_AGE_DAYS = env("ENTRY_ALERT_MAX_AGE_DAYS", 10.0)  # alert as soon as a game this young enters a list (0 = off)
 MAX_AGE_DAYS = env("MAX_AGE_DAYS", 30.0)          # only alert for games created this recently (0 = off)
 SIMILAR_THRESHOLD = env("SIMILAR_THRESHOLD", 0.6)
 SEARCH_PAGES = env("SEARCH_PAGES", 3)             # ~40 results per page
@@ -86,11 +87,11 @@ def chunks(seq, n):
 
 
 # ---------------------------------------------------------------- roblox
-def fetch_top(sort_id=SORT_ID):
+def fetch_top(sort_id=SORT_ID, device="computer", country="all"):
     """Top N games of the chosen sort, in rank order (sponsored slots removed)."""
     games, token, seen = [], None, set()
     for _ in range(5):
-        q = {"sessionId": SESSION, "sortId": sort_id, "device": "computer", "country": "all"}
+        q = {"sessionId": SESSION, "sortId": sort_id, "device": device, "country": country}
         if token:
             q["pageToken"] = token
         res = http("https://apis.roblox.com/explore-api/v1/get-sort-content?" + urllib.parse.urlencode(q))
@@ -107,6 +108,8 @@ def fetch_top(sort_id=SORT_ID):
 
 
 POOL_SORTS = ["top-playing-now", "top-trending", "up-and-coming"]
+POOL_DEVICES = ["computer", "phone"]
+POOL_COUNTRIES = env("POOL_COUNTRIES", "all,us,gb,ie,br,mx,ph,id,de,fr").split(",")
 
 
 def walk_games(obj, out):
@@ -133,11 +136,13 @@ def fetch_new_played():
     except Exception as e:
         print("home page sorts failed:", e)
     for sid in POOL_SORTS:
-        try:
-            for g in fetch_top(sid):
-                pool.setdefault(g["universeId"], g)
-        except Exception as e:
-            print(f"sort {sid} failed:", e)
+        for device in POOL_DEVICES:
+            for country in POOL_COUNTRIES:
+                try:
+                    for g in fetch_top(sid, device, country.strip()):
+                        pool.setdefault(g["universeId"], g)
+                except Exception as e:
+                    print(f"sort {sid}/{device}/{country} failed:", e)
     games = enrich(list(pool.values()), icons=False)
     young = [g for g in games if (age_days(g) is not None and age_days(g) <= NEW_LIST_MAX_AGE_DAYS)]
     young.sort(key=lambda g: -g["players"])
@@ -306,8 +311,9 @@ def alert_text(a):
     sim = ("unknown (name not searchable)" if s.get("count") is None else
            f"{s['count']} similar names found (out of {s['scanned']} search results), "
            f"{s['inTop']} also in this top list")
-    lines = [f"{a['name']} is blowing up!",
-             f"Growth: {a['reason']}",
+    entry = a.get("kind") == "entry"
+    lines = [f"{a['name']} just entered the list!" if entry else f"{a['name']} is blowing up!",
+             f"{'Why' if entry else 'Growth'}: {a['reason']}",
              f"Players now: {a['players']:,}  |  Rank #{a['rank']} in {a.get('listTitle', SORT_ID)}",
              f"Uploaded: {a['ageText']}",
              f"Similar names: {sim}"]
@@ -323,7 +329,7 @@ def send_discord(a):
         return
     s = a["similar"]
     fields = [
-        {"name": "Growth", "value": a["reason"], "inline": False},
+        {"name": "Why" if a.get("kind") == "entry" else "Growth", "value": a["reason"], "inline": False},
         {"name": "Players now", "value": f"{a['players']:,}", "inline": True},
         {"name": "Rank", "value": f"#{a['rank']} – {a.get('listTitle', '')}", "inline": True},
         {"name": "Uploaded", "value": a["ageText"], "inline": True},
@@ -334,7 +340,9 @@ def send_discord(a):
         fields.append({"name": "Look-alikes", "inline": False, "value": "\n".join(
             f"[{x['name'][:60]}](https://www.roblox.com/games/{x['placeId']}) – {x['players']:,} playing"
             for x in s["examples"][:5])[:1000]})
-    embed = {"title": f"🚀 {a['name']}"[:250], "url": a["url"], "color": 0xFF4D4D,
+    entry = a.get("kind") == "entry"
+    embed = {"title": f"{'🆕' if entry else '🚀'} {a['name']}"[:250], "url": a["url"],
+             "color": 0x2ECC71 if entry else 0xFF4D4D,
              "fields": fields, "footer": {"text": "Roblox Trend Tracker"},
              "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(a["time"]))}
     if a.get("icon"):
@@ -350,8 +358,9 @@ def send_ntfy(a):
     if not topic:
         return
     server = env("NTFY_SERVER", "https://ntfy.sh").rstrip("/")
-    body = {"topic": topic, "title": f"Trending spike: {a['name']}"[:200], "message": alert_text(a),
-            "click": a["url"], "tags": ["rocket"], "priority": 4}
+    entry = a.get("kind") == "entry"
+    body = {"topic": topic, "title": (f"New game entered: {a['name']}" if entry else f"Trending spike: {a['name']}")[:200],
+            "message": alert_text(a), "click": a["url"], "tags": ["new" if entry else "rocket"], "priority": 4}
     if a.get("icon"):
         body["icon"] = a["icon"]
     topic_len = len(topic)
@@ -367,7 +376,8 @@ def send_email(a):
     port = env("SMTP_PORT", 587)
     user, pw = os.environ.get("SMTP_USER", ""), os.environ.get("SMTP_PASS", "")
     msg = EmailMessage()
-    msg["Subject"] = f"🚀 Roblox trending spike: {a['name']}"
+    msg["Subject"] = (f"🆕 New Roblox game entered the list: {a['name']}" if a.get("kind") == "entry"
+                      else f"🚀 Roblox trending spike: {a['name']}")
     msg["From"] = env("EMAIL_FROM", user)
     msg["To"] = to
     msg.set_content(alert_text(a) + (f"\n\nDashboard: {DASHBOARD_URL}" if DASHBOARD_URL else ""))
@@ -420,7 +430,7 @@ def age_text(g):
 def build_alert(g, reason, similar):
     return {"time": NOW, "universeId": g["universeId"], "name": g["name"], "players": g["players"],
             "rank": g["rank"], "reason": reason, "url": game_url(g), "icon": g.get("icon"),
-            "similar": similar, "ageText": age_text(g)}
+            "similar": similar, "ageText": age_text(g), "kind": "spike"}
 
 
 LISTS = [
@@ -453,6 +463,20 @@ def process_list(key, title, top, ls, last_alert, run_alerts):
         g["ageDays"] = None if age_days(g) is None else round(age_days(g), 1)
         g["growth1h"] = growth(hist, NOW - 3600 - 90)
         g["growthEntry"] = growth(hist, entered - 1) if entered else None
+
+        age = age_days(g)
+        if (not bootstrap and entered == NOW and ENTRY_ALERT_MAX_AGE_DAYS > 0
+                and age is not None and age <= ENTRY_ALERT_MAX_AGE_DAYS):
+            key_e = uid + ":entry"
+            if key_e in run_alerts:
+                run_alerts[key_e]["listTitle"] += f" + {title}"
+            elif NOW - last_alert.get(key_e, 0) > 7 * 86400:
+                a = build_alert(g, f"Uploaded {age_text(g)}, just entered at #{g['rank']}", find_similar(g, top))
+                a["kind"], a["list"], a["listTitle"] = "entry", key, title
+                ls["similar"][uid] = a["similar"]
+                last_alert[key_e] = NOW
+                run_alerts[key_e] = a
+                alerts.append(a)
 
         if g["isNew"]:
             cached = ls["similar"].get(uid)

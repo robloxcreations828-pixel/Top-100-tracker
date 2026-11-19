@@ -69,7 +69,7 @@
     <div class="tile"><span class="muted">Players in top list</span><b id="t-players">–</b></div>
   </div>
 
-  <h2>Spike alerts <span class="pill hot">massive growth</span></h2>
+  <h2>Alerts <span class="pill hot">spikes</span> <span class="pill new">new entries</span></h2>
   <div class="alerts" id="alerts"></div>
 
   <h2>Top lists</h2>
@@ -177,7 +177,7 @@ function renderStatic() {
       ${a.icon ? `<img src="${esc(a.icon)}" width="52" height="52" alt="">` : ""}
       <div><a href="${esc(a.url)}" target="_blank" rel="noopener">${esc(a.name)}</a>
         <span class="muted"> · ${ago(a.time)} · #${a.rank} in ${esc(a.listTitle || "Top Trending")} · ${fmt(a.players)} playing${a.ageText ? ` · uploaded ${esc(a.ageText)}` : ""}</span>
-        <div class="why">${esc(a.reason)}</div>
+        <div class="why">${a.kind === "entry" ? "🆕 " : "🚀 "}${esc(a.reason)}</div>
         <div><b>${s.count == null ? "?" : s.count}</b> games with similar names
           <span class="muted">(${s.inTop ?? 0} in that list, from ${s.scanned ?? 0} search results)</span></div>
         ${looks ? `<div class="looks muted">Look-alikes: ${looks}</div>` : ""}
