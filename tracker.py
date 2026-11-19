@@ -176,6 +176,7 @@ def find_similar(game, top_games):
         q = {"searchQuery": target, "sessionId": SESSION, "pageType": "all"}
         if token:
             q["pageToken"] = token
+            time.sleep(2)  # Roblox rate-limits rapid search paging
         try:
             res = http("https://apis.roblox.com/search-api/omni-search?" + urllib.parse.urlencode(q))
         except Exception as e:
