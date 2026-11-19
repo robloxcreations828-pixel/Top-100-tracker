@@ -301,7 +301,10 @@ def send_ntfy(a):
             "click": a["url"], "tags": ["rocket"], "priority": 4}
     if a.get("icon"):
         body["icon"] = a["icon"]
-    http(server, json.dumps(body).encode(), {"Content-Type": "application/json"})
+    topic_len = len(topic)
+    res = http(server, json.dumps(body).encode(), {"Content-Type": "application/json"})
+    print(f"ntfy sent (topic is {topic_len} characters, starts with '{topic[:2]}'):",
+          res.get("id") if isinstance(res, dict) else res)
 
 
 def send_email(a):
@@ -328,6 +331,9 @@ def send_email(a):
 
 
 def send_all(a):
+    print("Alert channels set up:",
+          {"discord": bool(os.environ.get("DISCORD_WEBHOOK_URL")), "phone (ntfy)": bool(os.environ.get("NTFY_TOPIC")),
+           "email": bool(os.environ.get("SMTP_HOST") and os.environ.get("EMAIL_TO"))})
     for fn in (send_discord, send_ntfy, send_email):
         try:
             fn(a)
