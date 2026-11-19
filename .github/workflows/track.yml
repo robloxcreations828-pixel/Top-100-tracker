@@ -1,0 +1,66 @@
+name: Track Roblox trending
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"   # every 5 min (GitHub sometimes runs it a few minutes late)
+  workflow_dispatch:
+    inputs:
+      test_alert:
+        description: "Send a test alert to every channel"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: tracker
+  cancel-in-progress: false
+
+jobs:
+  track:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+
+      # Saved history lives on a separate "data" branch so the main branch stays clean
+      - name: Load saved data
+        run: |
+          git fetch --depth=1 origin data && git worktree add --detach data FETCH_HEAD || mkdir -p data
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run tracker
+        env:
+          DATA_DIR: data
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASS: ${{ secrets.SMTP_PASS }}
+          EMAIL_TO: ${{ secrets.EMAIL_TO }}
+          DASHBOARD_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/
+          # Optional tuning - set under Settings > Secrets and variables > Actions > Variables
+          SORT_ID: ${{ vars.SORT_ID }}
+          MIN_PLAYERS: ${{ vars.MIN_PLAYERS }}
+          SPIKE_PCT: ${{ vars.SPIKE_PCT }}
+          SPIKE_WINDOW_MIN: ${{ vars.SPIKE_WINDOW_MIN }}
+          SPIKE_MIN_GAIN: ${{ vars.SPIKE_MIN_GAIN }}
+          WATCH_HOURS: ${{ vars.WATCH_HOURS }}
+        run: python tracker.py ${{ inputs.test_alert && '--test-alert' || '' }}
+
+      - name: Save data (one commit, overwritten each run)
+        if: ${{ !inputs.test_alert }}
+        run: |
+          cd data
+          rm -rf .git
+          git init -q -b data
+          git config user.name "trend-tracker"
+          git config user.email "trend-tracker@users.noreply.github.com"
+          git add -A
+          git commit -qm "data $(date -u +%FT%TZ)"
+          git push -qf "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" data

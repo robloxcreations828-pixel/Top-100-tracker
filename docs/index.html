@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Roblox Trend Tracker</title>
+<style>
+  :root {
+    --bg: #0d0f14; --panel: #161a22; --line: #252b36; --text: #e8ebf1; --dim: #8a93a6;
+    --up: #3ddc84; --down: #ff6b6b; --hot: #ff4d4d; --new: #ffb020; --accent: #5b8cff;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  header { padding: 18px 20px 6px; display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: baseline; }
+  h1 { font-size: 20px; margin: 0; letter-spacing: -.01em; }
+  .muted { color: var(--dim); }
+  main { padding: 8px 20px 40px; max-width: 1200px; margin: 0 auto; }
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin: 10px 0 22px; }
+  .tile { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
+  .tile b { display: block; font-size: 24px; font-variant-numeric: tabular-nums; }
+  h2 { font-size: 15px; margin: 24px 0 10px; display: flex; gap: 8px; align-items: center; }
+  .pill { font-size: 11px; font-weight: 600; padding: 2px 7px; border-radius: 99px; }
+  .pill.new { background: #ffb02022; color: var(--new); }
+  .pill.hot { background: #ff4d4d22; color: var(--hot); }
+  .alerts { display: grid; gap: 10px; }
+  .alert { background: var(--panel); border: 1px solid var(--line); border-left: 3px solid var(--hot);
+           border-radius: 10px; padding: 12px 14px; display: flex; gap: 12px; }
+  .alert img, td img { border-radius: 8px; flex: none; background: #222; }
+  .alert a { color: var(--text); font-weight: 600; text-decoration: none; }
+  .alert .why { color: var(--up); font-weight: 600; }
+  .looks { margin-top: 4px; font-size: 12.5px; }
+  .empty { color: var(--dim); background: var(--panel); border: 1px dashed var(--line);
+           border-radius: 10px; padding: 14px; }
+  .controls { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+  input, select { background: var(--panel); color: var(--text); border: 1px solid var(--line);
+                  border-radius: 8px; padding: 7px 10px; font: inherit; }
+  input { flex: 1; min-width: 160px; }
+  .tablewrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; }
+  table { width: 100%; border-collapse: collapse; background: var(--panel); }
+  th, td { padding: 8px 10px; border-bottom: 1px solid var(--line); text-align: left; white-space: nowrap; }
+  th { font-size: 12px; color: var(--dim); font-weight: 600; position: sticky; top: 0; background: var(--panel); }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  td.name { white-space: normal; min-width: 200px; }
+  td.name a { color: var(--text); text-decoration: none; font-weight: 500; }
+  td.name a:hover { text-decoration: underline; }
+  tr.isnew { background: #ffb0200a; }
+  .up { color: var(--up); } .down { color: var(--down); }
+  .namecell { display: flex; gap: 10px; align-items: center; }
+  svg.spark { display: block; }
+  .err { background: #ff6b6b1a; border: 1px solid #ff6b6b55; padding: 12px; border-radius: 10px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🚀 Roblox Trend Tracker</h1>
+  <span class="muted" id="updated">Loading…</span>
+</header>
+<main>
+  <div id="error"></div>
+  <div class="tiles">
+    <div class="tile"><span class="muted">Games tracked</span><b id="t-count">–</b></div>
+    <div class="tile"><span class="muted">New entries</span><b id="t-new">–</b></div>
+    <div class="tile"><span class="muted">Alerts (24h)</span><b id="t-alerts">–</b></div>
+    <div class="tile"><span class="muted">Players in top list</span><b id="t-players">–</b></div>
+  </div>
+
+  <h2>Spike alerts <span class="pill hot">massive growth</span></h2>
+  <div class="alerts" id="alerts"></div>
+
+  <h2>Top list</h2>
+  <div class="controls">
+    <input id="q" placeholder="Search games…">
+    <select id="sort">
+      <option value="rank">Sort: rank</option>
+      <option value="growth">Sort: 1h growth %</option>
+      <option value="players">Sort: players</option>
+      <option value="new">New entries first</option>
+    </select>
+  </div>
+  <div class="tablewrap">
+    <table>
+      <thead><tr>
+        <th class="num">#</th><th>Game</th><th class="num">Players</th>
+        <th class="num">1h growth</th><th>Last few hours</th><th class="num">Similar names</th>
+      </tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </div>
+  <p class="muted" style="margin-top:14px">Updates every ~5 minutes. "Similar names" counts Roblox
+    search results whose names closely match (checked for new entries).</p>
+</main>
+
+<script>
+const params = new URLSearchParams(location.search);
+function dataUrl() {
+  if (params.get("data")) return params.get("data");
+  const owner = location.hostname.split(".")[0];
+  const repo = location.pathname.split("/").filter(Boolean)[0] || "";
+  return `https://raw.githubusercontent.com/${owner}/${repo}/data/data.json`;
+}
+const fmt = n => n == null ? "–" : Number(n).toLocaleString();
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const ago = t => { const m = Math.round((Date.now()/1000 - t)/60);
+  return m < 1 ? "just now" : m < 60 ? `${m} min ago` : m < 1440 ? `${Math.round(m/60)} h ago` : `${Math.round(m/1440)} d ago`; };
+const gameLink = g => `https://www.roblox.com/games/${g.placeId || ""}`;
+
+function spark(vals) {
+  if (!vals || vals.length < 2) return '<span class="muted">collecting…</span>';
+  const w = 110, h = 26, min = Math.min(...vals), max = Math.max(...vals), r = max - min || 1;
+  const pts = vals.map((v, i) => `${(i/(vals.length-1)*w).toFixed(1)},${(h-2-(v-min)/r*(h-4)).toFixed(1)}`).join(" ");
+  const col = vals[vals.length-1] >= vals[0] ? "var(--up)" : "var(--down)";
+  return `<svg class="spark" width="${w}" height="${h}"><polyline points="${pts}" fill="none" stroke="${col}" stroke-width="1.6"/></svg>`;
+}
+function growthCell(gr) {
+  if (!gr || gr.pct == null) return '<span class="muted">–</span>';
+  const cls = gr.pct > 0 ? "up" : gr.pct < 0 ? "down" : "";
+  return `<span class="${cls}">${gr.pct > 0 ? "+" : ""}${gr.pct}%</span>`;
+}
+
+let DATA = null;
+function render() {
+  if (!DATA) return;
+  const q = document.getElementById("q").value.toLowerCase();
+  const mode = document.getElementById("sort").value;
+  let games = DATA.games.filter(g => g.name.toLowerCase().includes(q));
+  const pct = g => g.growth1h?.pct ?? -1e9;
+  if (mode === "growth") games.sort((a, b) => pct(b) - pct(a));
+  if (mode === "players") games.sort((a, b) => b.players - a.players);
+  if (mode === "new") games.sort((a, b) => (b.isNew - a.isNew) || a.rank - b.rank);
+
+  document.getElementById("rows").innerHTML = games.map(g => `
+    <tr class="${g.isNew ? "isnew" : ""}">
+      <td class="num">${g.rank}</td>
+      <td class="name"><div class="namecell">
+        ${g.icon ? `<img src="${esc(g.icon)}" width="36" height="36" loading="lazy" alt="">` : ""}
+        <div><a href="${gameLink(g)}" target="_blank" rel="noopener">${esc(g.name)}</a>
+        ${g.isNew ? '<span class="pill new">NEW</span>' : ""}
+        <div class="muted" style="font-size:12px">${esc(g.creator || "")}${g.isNew && g.enteredAt ? ` · entered ${ago(g.enteredAt)}` : ""}</div></div>
+      </div></td>
+      <td class="num">${fmt(g.players)}</td>
+      <td class="num">${growthCell(g.growth1h)}</td>
+      <td>${spark(g.spark)}</td>
+      <td class="num">${g.similar ? (g.similar.count == null ? "?" : `<b>${g.similar.count}</b>`) : '<span class="muted">–</span>'}</td>
+    </tr>`).join("");
+}
+
+function renderStatic() {
+  const d = DATA, now = Date.now()/1000;
+  document.getElementById("updated").textContent =
+    `${d.sort} · updated ${ago(d.updatedAt)} (${new Date(d.updatedAt*1000).toLocaleTimeString()})`;
+  document.getElementById("t-count").textContent = d.games.length;
+  document.getElementById("t-new").textContent = d.games.filter(g => g.isNew).length;
+  document.getElementById("t-alerts").textContent = d.alerts.filter(a => now - a.time < 86400).length;
+  document.getElementById("t-players").textContent = fmt(d.games.reduce((s, g) => s + g.players, 0));
+
+  const el = document.getElementById("alerts");
+  el.innerHTML = d.alerts.length ? d.alerts.slice(0, 20).map(a => {
+    const s = a.similar || {};
+    const looks = (s.examples || []).slice(0, 3).map(x =>
+      `<a href="https://www.roblox.com/games/${x.placeId}" target="_blank" rel="noopener" style="font-weight:400">${esc(x.name)}</a> (${fmt(x.players)})`).join(", ");
+    return `<div class="alert">
+      ${a.icon ? `<img src="${esc(a.icon)}" width="52" height="52" alt="">` : ""}
+      <div><a href="${esc(a.url)}" target="_blank" rel="noopener">${esc(a.name)}</a>
+        <span class="muted"> · ${ago(a.time)} · rank #${a.rank} · ${fmt(a.players)} playing</span>
+        <div class="why">${esc(a.reason)}</div>
+        <div><b>${s.count == null ? "?" : s.count}</b> games with similar names
+          <span class="muted">(${s.inTop ?? 0} in the top list, from ${s.scanned ?? 0} search results)</span></div>
+        ${looks ? `<div class="looks muted">Look-alikes: ${looks}</div>` : ""}
+      </div></div>`;
+  }).join("") : '<div class="empty">No spikes yet. New games that grow fast will show up here.</div>';
+}
+
+async function load() {
+  try {
+    const r = await fetch(dataUrl() + (dataUrl().includes("?") ? "&" : "?") + "t=" + Date.now());
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    DATA = await r.json();
+    document.getElementById("error").innerHTML = "";
+    renderStatic(); render();
+  } catch (e) {
+    document.getElementById("error").innerHTML =
+      `<div class="err">Couldn't load data yet (${esc(e.message)}). If you just set this up, wait for the first tracker run to finish.</div>`;
+  }
+}
+document.getElementById("q").addEventListener("input", render);
+document.getElementById("sort").addEventListener("change", render);
+load(); setInterval(load, 60000);
+</script>
+</body>
+</html>
