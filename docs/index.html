@@ -178,6 +178,7 @@ function renderStatic() {
       <div><a href="${esc(a.url)}" target="_blank" rel="noopener">${esc(a.name)}</a>
         <span class="muted"> · ${ago(a.time)} · #${a.rank} in ${esc(a.listTitle || "Top Trending")} · ${fmt(a.players)} playing${a.ageText ? ` · uploaded ${esc(a.ageText)}` : ""}</span>
         <div class="why">${a.kind === "entry" ? "🆕 " : "🚀 "}${esc(a.reason)}</div>
+        ${(a.timing || []).length ? `<div class="muted" style="font-size:12.5px">⏱ ${a.timing.map(esc).join(" · ")}</div>` : ""}
         <div><b>${s.count == null ? "?" : s.count}</b> games with similar names
           <span class="muted">(${s.inTop ?? 0} in that list, from ${s.scanned ?? 0} search results)</span></div>
         ${looks ? `<div class="looks muted">Look-alikes: ${looks}</div>` : ""}

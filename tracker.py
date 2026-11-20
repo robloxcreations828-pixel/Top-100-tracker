@@ -294,7 +294,48 @@ def growth(hist, since_ts):
             "minutes": round((pts[-1][0] - pts[0][0]) / 60)}
 
 
+def dur(sec):
+    m = max(0, round(sec / 60))
+    if m < 60:
+        return f"{m} min"
+    h, m = divmod(m, 60)
+    if h < 48:
+        return f"{h}h {m}m" if m else f"{h}h"
+    return f"{h // 24} days {h % 24}h"
+
+
+def surge_start(hist, since_ts):
+    """When the climb began: the lowest player count since since_ts (before the latest sample)."""
+    pts = [p for p in hist[:-1] if p[0] >= since_ts]
+    return min(pts, key=lambda p: (p[1], -p[0]))[0] if pts else None
+
+
+def timing_text(entered, surge):
+    """'In the list for ...' and 'surge started ... after entering' lines."""
+    lines = []
+    if entered:
+        lines.append(f"In the list for {dur(NOW - entered)}" if NOW - entered >= 60 else "Just entered the list")
+    if entered and surge:
+        gap = surge - entered
+        when = "right after entering" if gap < 60 else f"{dur(gap)} after entering"
+        lines.append(f"Surge started {when} ({dur(NOW - surge)} ago)")
+    return lines
+
+
 def is_spike(game, hist, entered_at):
+    """Returns (reason, surge_start_ts) or (None, None)."""
+    if game["players"] < MIN_PLAYERS:
+        return None, None
+    win_start = NOW - SPIKE_WINDOW_MIN * 60 - 90
+    w = growth(hist, win_start)
+    if w and w["gain"] >= SPIKE_MIN_GAIN and w["pct"] is not None and w["pct"] >= SPIKE_PCT:
+        return (f"+{w['pct']:.0f}% in {w['minutes']} min ({w['from']:,} → {w['to']:,})",
+                surge_start(hist, max(win_start, entered_at - 1)))
+    e = growth(hist, entered_at - 1)
+    if e and e["from"] and e["to"] >= 2 * e["from"] and e["gain"] >= SPIKE_MIN_GAIN:
+        return (f"{e['to'] / e['from']:.1f}× since entering the list ({e['from']:,} → {e['to']:,})",
+                surge_start(hist, entered_at - 1))
+    return None, None
     if game["players"] < MIN_PLAYERS:
         return None
     w = growth(hist, NOW - SPIKE_WINDOW_MIN * 60 - 90)
@@ -338,6 +379,7 @@ def alert_text(a):
              f"{'Why' if entry else 'Growth'}: {a['reason']}",
              f"Players now: {a['players']:,}  |  Rank #{a['rank']} in {a.get('listTitle', SORT_ID)}",
              f"Uploaded: {a['ageText']}",
+             *a.get("timing", []),
              f"Similar names: {sim}"]
     if s.get("examples"):
         lines.append("Look-alikes: " + "; ".join(f"{x['name']} ({x['players']:,})" for x in s["examples"][:3]))
@@ -355,6 +397,7 @@ def send_discord(a):
         {"name": "Players now", "value": f"{a['players']:,}", "inline": True},
         {"name": "Rank", "value": f"#{a['rank']} – {a.get('listTitle', '')}", "inline": True},
         {"name": "Uploaded", "value": a["ageText"], "inline": True},
+        *([{"name": "Timing", "value": "\n".join(a["timing"]), "inline": False}] if a.get("timing") else []),
         {"name": "Similar names", "value": "?" if s.get("count") is None else
          f"**{s['count']}** found ({s['inTop']} in this list)", "inline": True},
     ]
@@ -497,6 +540,7 @@ def process_list(key, title, top, ls, last_alert, run_alerts):
             elif NOW - last_alert.get(key_e, 0) > 7 * 86400:
                 a = build_alert(g, f"Uploaded {age_text(g)}, just entered at #{g['rank']}", find_similar(g, top))
                 a["kind"], a["list"], a["listTitle"] = "entry", key, title
+                a["timing"] = timing_text(entered, None)
                 ls["similar"][uid] = a["similar"]
                 last_alert[key_e] = NOW
                 run_alerts[key_e] = a
@@ -508,7 +552,7 @@ def process_list(key, title, top, ls, last_alert, run_alerts):
                 _lookups["left"] -= 1
                 ls["similar"][uid] = cached = find_similar(g, top)
             g["similar"] = cached
-            reason = is_spike(g, hist, entered)
+            reason, surge = is_spike(g, hist, entered)
             if reason and not young_enough(g):
                 print(f"Skipped alert for {g['name']}: created {g.get('created')} (older than {MAX_AGE_DAYS:g} days)")
                 reason = None
@@ -517,6 +561,7 @@ def process_list(key, title, top, ls, last_alert, run_alerts):
                 reason = None
             if reason and NOW - last_alert.get(uid, 0) > ALERT_COOLDOWN_HOURS * 3600:
                 a = build_alert(g, reason, find_similar(g, top))  # fresh count for the alert
+                a["timing"] = timing_text(entered, surge)
                 a["list"], a["listTitle"] = key, title
                 ls["similar"][uid] = g["similar"] = a["similar"]
                 last_alert[uid] = NOW
