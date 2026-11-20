@@ -72,6 +72,13 @@
   <h2>Alerts <span class="pill hot">spikes</span> <span class="pill new">new entries</span></h2>
   <div class="alerts" id="alerts"></div>
 
+  <h2>🔥 Trend ideas <span class="muted" style="font-weight:400;font-size:12px">games blowing up on Steam, vs how many Roblox games already copy them</span></h2>
+  <div class="tablewrap" style="margin-bottom:6px"><table>
+    <thead><tr><th>Game</th><th class="num">Steam players</th><th class="num">24h</th><th>Why it's hot</th>
+      <th class="num">Roblox look-alikes</th><th class="num">Biggest on Roblox</th><th class="num">Score</th></tr></thead>
+    <tbody id="trends"></tbody></table></div>
+  <p class="muted" style="font-size:12px;margin:0 0 8px">Score = demand minus Roblox competition. <span class="pill new">OPEN</span> = no Roblox look-alike with 2,000+ players.</p>
+
   <h2>Top lists</h2>
   <div class="tabs" id="tabs"></div>
   <div class="controls">
@@ -177,7 +184,7 @@ function renderStatic() {
       ${a.icon ? `<img src="${esc(a.icon)}" width="52" height="52" alt="">` : ""}
       <div><a href="${esc(a.url)}" target="_blank" rel="noopener">${esc(a.name)}</a>
         <span class="muted"> · ${ago(a.time)} · #${a.rank} in ${esc(a.listTitle || "Top Trending")} · ${fmt(a.players)} playing${a.ageText ? ` · uploaded ${esc(a.ageText)}` : ""}</span>
-        <div class="why">${a.kind === "entry" ? "🆕 " : "🚀 "}${esc(a.reason)}</div>
+        <div class="why">${a.kind === "entry" ? "🆕 " : a.kind === "trend" ? "🔥 " : "🚀 "}${esc(a.reason)}</div>
         ${(a.timing || []).length ? `<div class="muted" style="font-size:12.5px">⏱ ${a.timing.map(esc).join(" · ")}</div>` : ""}
         <div><b>${s.count == null ? "?" : s.count}</b> games with similar names
           <span class="muted">(${s.inTop ?? 0} in that list, from ${s.scanned ?? 0} search results)</span></div>
@@ -186,13 +193,32 @@ function renderStatic() {
   }).join("") : '<div class="empty">No spikes yet. New games that grow fast will show up here.</div>';
 }
 
+function renderTrends() {
+  const t = DATA.trends, el = document.getElementById("trends");
+  if (!t || !t.ideas?.length) { el.innerHTML = '<tr><td colspan="7" class="muted">Waiting for the first trend scan…</td></tr>'; return; }
+  el.innerHTML = t.ideas.slice(0, 30).map(i => {
+    const r = i.roblox;
+    return `<tr class="${i.hot && i.open ? "isnew" : ""}">
+      <td class="name"><div class="namecell">${i.image ? `<img src="${esc(i.image)}" width="64" height="30" style="object-fit:cover" loading="lazy" alt="">` : ""}
+        <div><a href="${esc(i.url)}" target="_blank" rel="noopener">${esc(i.name)}</a>
+        ${i.hot ? '<span class="pill hot">HOT</span>' : ""} ${i.open ? '<span class="pill new">OPEN</span>' : ""}
+        <div class="muted" style="font-size:12px">${i.release ? "Released " + esc(i.release) : ""}${i.buzz ? ` · ${i.buzz} mentions` : ""}</div></div></div></td>
+      <td class="num">${fmt(i.players)}</td>
+      <td class="num">${growthCell(i.growth24 == null ? null : {pct: i.growth24})}</td>
+      <td style="white-space:normal;min-width:160px;font-size:12.5px">${esc((i.why || []).join("; ")) || '<span class="muted">–</span>'}</td>
+      <td class="num">${r ? (r.count == null ? "?" : r.count) : '<span class="muted">not checked</span>'}</td>
+      <td class="num">${i.robloxBiggest == null ? "–" : fmt(i.robloxBiggest)}</td>
+      <td class="num"><b>${i.score ?? "–"}</b></td></tr>`;
+  }).join("");
+}
+
 async function load() {
   try {
     const r = await fetch(dataUrl() + (dataUrl().includes("?") ? "&" : "?") + "t=" + Date.now());
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     DATA = await r.json();
     document.getElementById("error").innerHTML = "";
-    renderStatic(); render();
+    renderStatic(); render(); renderTrends();
   } catch (e) {
     document.getElementById("error").innerHTML =
       `<div class="err">Couldn't load data yet (${esc(e.message)}). If you just set this up, wait for the first tracker run to finish.</div>`;

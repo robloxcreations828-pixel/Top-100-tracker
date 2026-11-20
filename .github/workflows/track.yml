@@ -43,6 +43,7 @@ jobs:
           SMTP_USER: ${{ secrets.SMTP_USER }}
           SMTP_PASS: ${{ secrets.SMTP_PASS }}
           EMAIL_TO: ${{ secrets.EMAIL_TO }}
+          YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
           DASHBOARD_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/
           # Optional tuning - set under Settings > Secrets and variables > Actions > Variables
           SORT_ID: ${{ vars.SORT_ID }}
@@ -52,6 +53,8 @@ jobs:
           SPIKE_MIN_GAIN: ${{ vars.SPIKE_MIN_GAIN }}
           WATCH_HOURS: ${{ vars.WATCH_HOURS }}
           MAX_AGE_DAYS: ${{ vars.MAX_AGE_DAYS }}
+          STEAM_MIN_PLAYERS: ${{ vars.STEAM_MIN_PLAYERS }}
+          ROBLOX_OPEN_MAX_PLAYERS: ${{ vars.ROBLOX_OPEN_MAX_PLAYERS }}
           ENTRY_ALERT_MAX_AGE_DAYS: ${{ vars.ENTRY_ALERT_MAX_AGE_DAYS }}
           NEW_LIST_MAX_AGE_DAYS: ${{ vars.NEW_LIST_MAX_AGE_DAYS }}
         run: python tracker.py ${{ inputs.test_alert && '--test-alert' || '' }}

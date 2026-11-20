@@ -12,6 +12,15 @@ Both lists use the same alert rules, and a game in both lists only alerts once.
 - **Alerts:** Discord, email, and phone push notifications (through the free ntfy app)
 - **Dashboard:** a live web page with the top 100, 1-hour growth, sparklines, new entries and the alert history
 
+## 🔥 Trend Scout (ideas from outside Roblox)
+Every 30 minutes it also checks **Steam's most-played, top-selling and new-release charts** with live player counts. A Steam game is **HOT** when it has 3,000+ players and is growing fast (+50% in 24h), jumped up Steam's most-played chart, or is a new release in the top sellers. For hot games it searches Roblox for look-alikes. If no Roblox look-alike has 2,000+ players, the game is **OPEN** and you get a 🔥 alert: a trend with no big Roblox game yet.
+
+The dashboard's **Trend ideas** table ranks every idea by *score = demand − Roblox competition*.
+
+Optional extra signals:
+- **Reddit** gaming subreddits are checked automatically (Reddit sometimes blocks GitHub's servers; then they're skipped).
+- **YouTube trending gaming videos:** add a free YouTube Data API key as the secret `YOUTUBE_API_KEY` (create one at console.cloud.google.com → APIs → YouTube Data API v3 → Credentials).
+
 ## What counts as a spike (default settings)
 
 A game sends an alert when **all** of these are true:
@@ -71,6 +80,8 @@ To change the defaults, go to **Settings → Secrets and variables → Actions �
 | `SPIKE_MIN_GAIN` | `500` | Minimum number of extra players |
 | `NEW_LIST_MAX_AGE_DAYS` | `30` | Age limit for the New & Most Played list |
 | `ENTRY_ALERT_MAX_AGE_DAYS` | `10` | Alert when a game this young enters a list (`0` = off) |
+| `STEAM_MIN_PLAYERS` | `3000` | Minimum Steam players for a trend idea |
+| `ROBLOX_OPEN_MAX_PLAYERS` | `2000` | A trend is "open" if no Roblox look-alike has this many players |
 | `MAX_AGE_DAYS` | `30` | Only alert for games created within this many days (`0` = any age) |
 | `WATCH_HOURS` | `24` | How long after entering the list a game still counts as "new" |
 

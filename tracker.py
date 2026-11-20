@@ -243,6 +243,9 @@ def similarity(a, b):
     jaccard = len(ta & tb) / len(ta | tb)
     seq = SequenceMatcher(None, a, b).ratio()
     contains = 0.9 if (len(a) >= 5 and a in b) or (len(b) >= 5 and b in a) else 0.0
+    short = ta if len(ta) <= len(tb) else tb   # every word of the shorter name appears in the other
+    if len("".join(short)) >= 3 and short <= (ta | tb) and short <= ta & tb:
+        contains = max(contains, 0.85)
     return max(jaccard, seq, contains)
 
 
@@ -386,11 +389,13 @@ def alert_text(a):
     sim = (f"unknown ({s.get('note', 'name not searchable')})" if s.get("count") is None else
            f"{s['count']} similar names found (out of {s['scanned']} search results), "
            f"{s['inTop']} also in this top list")
-    entry = a.get("kind") == "entry"
-    lines = [f"{a['name']} just entered the list!" if entry else f"{a['name']} is blowing up!",
-             f"{'Why' if entry else 'Growth'}: {a['reason']}",
-             f"Players now: {a['players']:,}  |  Rank #{a['rank']} in {a.get('listTitle', SORT_ID)}",
-             f"Uploaded: {a['ageText']}",
+    kind = a.get("kind")
+    first = {"entry": f"{a['name']} just entered the list!",
+             "trend": f"{a['name']} is blowing up on Steam - no big Roblox game yet!"}.get(kind, f"{a['name']} is blowing up!")
+    lines = [first,
+             f"{'Growth' if kind == 'spike' else 'Why'}: {a['reason']}",
+             f"{'Steam players' if kind == 'trend' else 'Players'} now: {a['players']:,}  |  Rank #{a['rank']} in {a.get('listTitle', SORT_ID)}",
+             f"{'Released' if kind == 'trend' else 'Uploaded'}: {a['ageText']}",
              *a.get("timing", []),
              f"Similar names: {sim}"]
     if s.get("examples"):
@@ -405,10 +410,10 @@ def send_discord(a):
         return
     s = a["similar"]
     fields = [
-        {"name": "Why" if a.get("kind") == "entry" else "Growth", "value": a["reason"], "inline": False},
-        {"name": "Players now", "value": f"{a['players']:,}", "inline": True},
+        {"name": "Growth" if a.get("kind") == "spike" else "Why", "value": a["reason"], "inline": False},
+        {"name": "Steam players" if a.get("kind") == "trend" else "Players now", "value": f"{a['players']:,}", "inline": True},
         {"name": "Rank", "value": f"#{a['rank']} – {a.get('listTitle', '')}", "inline": True},
-        {"name": "Uploaded", "value": a["ageText"], "inline": True},
+        {"name": "Released" if a.get("kind") == "trend" else "Uploaded", "value": a["ageText"], "inline": True},
         *([{"name": "Timing", "value": "\n".join(a["timing"]), "inline": False}] if a.get("timing") else []),
         {"name": "Similar names", "value": "?" if s.get("count") is None else
          f"**{s['count']}** found ({s['inTop']} in this list)", "inline": True},
@@ -418,8 +423,9 @@ def send_discord(a):
             f"[{x['name'][:60]}](https://www.roblox.com/games/{x['placeId']}) – {x['players']:,} playing"
             for x in s["examples"][:5])[:1000]})
     entry = a.get("kind") == "entry"
-    embed = {"title": f"{'🆕' if entry else '🚀'} {a['name']}"[:250], "url": a["url"],
-             "color": 0x2ECC71 if entry else 0xFF4D4D,
+    trend = a.get("kind") == "trend"
+    embed = {"title": f"{'🔥' if trend else '🆕' if entry else '🚀'} {a['name']}"[:250], "url": a["url"],
+             "color": 0xFF9F1C if trend else 0x2ECC71 if entry else 0xFF4D4D,
              "fields": fields, "footer": {"text": "Roblox Trend Tracker"},
              "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(a["time"]))}
     if a.get("icon"):
@@ -436,7 +442,9 @@ def send_ntfy(a):
         return
     server = env("NTFY_SERVER", "https://ntfy.sh").rstrip("/")
     entry = a.get("kind") == "entry"
-    body = {"topic": topic, "title": (f"New game entered: {a['name']}" if entry else f"Trending spike: {a['name']}")[:200],
+    title = {"entry": f"New game entered: {a['name']}", "trend": f"Trend idea (no Roblox game yet): {a['name']}"}.get(
+        a.get("kind"), f"Trending spike: {a['name']}")
+    body = {"topic": topic, "title": title[:200],
             "message": alert_text(a), "click": a["url"], "tags": ["new" if entry else "rocket"], "priority": 4}
     if a.get("icon"):
         body["icon"] = a["icon"]
@@ -453,7 +461,8 @@ def send_email(a):
     port = env("SMTP_PORT", 587)
     user, pw = os.environ.get("SMTP_USER", ""), os.environ.get("SMTP_PASS", "")
     msg = EmailMessage()
-    msg["Subject"] = (f"🆕 New Roblox game entered the list: {a['name']}" if a.get("kind") == "entry"
+    msg["Subject"] = (f"🔥 Trend idea, no Roblox game yet: {a['name']}" if a.get("kind") == "trend"
+                      else f"🆕 New Roblox game entered the list: {a['name']}" if a.get("kind") == "entry"
                       else f"🚀 Roblox trending spike: {a['name']}")
     msg["From"] = env("EMAIL_FROM", user)
     msg["To"] = to
@@ -643,6 +652,15 @@ def main():
         lists_out[key] = {"title": title, "games": top}
 
     st["alerts"] = (new_alerts + st["alerts"])[:200]
+    try:  # trend scout: games blowing up outside Roblox (runs every 30 min)
+        import trend_scout
+        trend_scout.T = sys.modules[__name__]
+        trends = trend_scout.scout(st, [g for l in lists_out.values() for g in l["games"]], dry)
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        print("trend scout failed:", e)
+        trends = st.get("scoutOut")
     for a in new_alerts:
         print("ALERT:\n" + alert_text(a) + "\n")
         if not dry:
@@ -654,7 +672,7 @@ def main():
         "settings": {"minPlayers": MIN_PLAYERS, "spikePct": SPIKE_PCT, "spikeWindowMin": SPIKE_WINDOW_MIN,
                      "spikeMinGain": SPIKE_MIN_GAIN, "watchHours": WATCH_HOURS,
                      "maxAgeDays": MAX_AGE_DAYS, "newListMaxAgeDays": NEW_LIST_MAX_AGE_DAYS},
-        "lists": lists_out, "alerts": st["alerts"][:100],
+        "lists": lists_out, "alerts": st["alerts"][:100], "trends": trends,
     })
 
 
