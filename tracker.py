@@ -251,8 +251,8 @@ def find_similar(game, top_games):
     target = norm(game["name"])
     if not target:
         return {"count": None, "scanned": 0, "inTop": 0, "examples": [], "note": "name has no searchable letters"}
-    found, token = {}, None
-    for _ in range(SEARCH_PAGES):
+    found, token, pages_ok = {}, None, 0
+    for page in range(SEARCH_PAGES):
         q = {"searchQuery": target, "sessionId": SESSION, "pageType": "all"}
         if token:
             q["pageToken"] = token
@@ -260,8 +260,17 @@ def find_similar(game, top_games):
         try:
             res = http("https://apis.roblox.com/search-api/omni-search?" + urllib.parse.urlencode(q), tries=2)
         except Exception as e:
-            print("search failed:", e)
-            break
+            if page == 0:  # first page blocked: wait and try once more
+                time.sleep(12)
+                try:
+                    res = http("https://apis.roblox.com/search-api/omni-search?" + urllib.parse.urlencode(q), tries=1)
+                except Exception:
+                    print("search failed:", e)
+                    break
+            else:
+                print("search failed:", e)
+                break
+        pages_ok += 1
         for group in res.get("searchResults", []):
             for c in group.get("contents", []) or []:
                 uid = c.get("universeId")
@@ -270,6 +279,9 @@ def find_similar(game, top_games):
         token = res.get("nextPageToken")
         if not token:
             break
+    if not pages_ok:
+        return {"count": None, "scanned": 0, "inTop": 0, "examples": [], "checkedAt": NOW - 5 * 3600,
+                "note": "Roblox search was busy - try the game name in Roblox search"}
     matches = []
     for uid, c in found.items():
         score = similarity(target, norm(c.get("name")))
@@ -371,7 +383,7 @@ def game_url(g):
 
 def alert_text(a):
     s = a["similar"]
-    sim = ("unknown (name not searchable)" if s.get("count") is None else
+    sim = (f"unknown ({s.get('note', 'name not searchable')})" if s.get("count") is None else
            f"{s['count']} similar names found (out of {s['scanned']} search results), "
            f"{s['inTop']} also in this top list")
     entry = a.get("kind") == "entry"
