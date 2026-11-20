@@ -17,11 +17,13 @@ import urllib.parse
 
 import tracker as T
 
+SCOUT_VERSION = 2  # bump when the rules change -> re-scan on the next run
 SCOUT_EVERY_MIN = T.env("SCOUT_EVERY_MIN", 30)
 STEAM_MIN_PLAYERS = T.env("STEAM_MIN_PLAYERS", 3000)
 STEAM_GROWTH_PCT = T.env("STEAM_GROWTH_PCT", 50.0)      # 24h growth that counts as blowing up
 STEAM_RANK_JUMP = T.env("STEAM_RANK_JUMP", 25)          # places climbed vs last week
 NEW_RELEASE_DAYS = T.env("NEW_RELEASE_DAYS", 60)
+STEAM_MAX_AGE_DAYS = T.env("STEAM_MAX_AGE_DAYS", 60.0)   # only Steam games released this recently
 ROBLOX_OPEN_MAX_PLAYERS = T.env("ROBLOX_OPEN_MAX_PLAYERS", 2000)  # biggest Roblox look-alike below this = "open"
 ROBLOX_CHECKS_PER_SCAN = T.env("ROBLOX_CHECKS_PER_SCAN", 6)
 TREND_ALERT_COOLDOWN_DAYS = T.env("TREND_ALERT_COOLDOWN_DAYS", 7.0)
@@ -55,6 +57,20 @@ def steam_candidates():
                 c[key] = True
     except Exception as e:
         print("steam featured failed:", e)
+
+    # Steam's "Popular New Releases" list (the store search page, as JSON)
+    for flt in ("popularnew", "topsellers"):
+        try:
+            res = get("https://store.steampowered.com/search/results/?" + urllib.parse.urlencode(
+                {"filter": flt, "json": 1, "count": 75, "cc": "us", "l": "english", "category1": 998}))
+            for it in res.get("items", []):
+                m = re.search(r"/apps/(\d+)/", it.get("logo", ""))
+                if m:
+                    c = cands.setdefault(int(m.group(1)), {"appid": int(m.group(1))})
+                    c.setdefault("name", it.get("name"))
+                    c["top_sellers" if flt == "topsellers" else "popular_new"] = True
+        except Exception as e:
+            print(f"steam search {flt} failed:", str(e)[:80])
     return cands
 
 
@@ -149,8 +165,9 @@ def score(idea):
 # ------------------------------------------------------------------ main entry
 def scout(st, roblox_games, dry):
     ts = st.setdefault("scout", {"lastScan": 0, "history": {}, "details": {}, "roblox": {}, "lastAlert": {}})
-    if T.NOW - ts["lastScan"] < SCOUT_EVERY_MIN * 60 - 30:
+    if ts.get("version") == SCOUT_VERSION and T.NOW - ts["lastScan"] < SCOUT_EVERY_MIN * 60 - 30:
         return st.get("scoutOut")
+    ts["version"] = SCOUT_VERSION
     ts["lastScan"] = T.NOW
 
     cands = steam_candidates()
@@ -167,6 +184,9 @@ def scout(st, roblox_games, dry):
         name = c.get("name") or det.get("name")
         if not name:
             continue
+        age = release_age_days(det.get("release"))
+        if age is None or age < -1 or age > STEAM_MAX_AGE_DAYS:
+            continue  # only newly released games
         players = steam_players(appid)
         time.sleep(0.15)
         if players is None:
@@ -180,7 +200,6 @@ def scout(st, roblox_games, dry):
         if c.get("chartRank"):
             lw = c.get("lastWeekRank") or 0
             jump = 101 - c["chartRank"] if lw == 0 else lw - c["chartRank"]
-        age = release_age_days(det.get("release"))
         idea = {"appid": appid, "name": name, "players": players, "growth24": g24pct,
                 "growth3h": g3["pct"] if g3 and g3["minutes"] >= 60 else None,
                 "chartRank": c.get("chartRank"), "rankJump": jump if jump and jump > 0 else None,
@@ -198,6 +217,8 @@ def scout(st, roblox_games, dry):
                        else f"climbed {idea['rankJump']} places on Steam this week")
         if idea["newRelease"] and idea["topSeller"]:
             why.append(f"new release ({det.get('release')}) in Steam top sellers")
+        elif c.get("popular_new") and players >= STEAM_MIN_PLAYERS * 3:
+            why.append(f"one of Steam's most popular new releases ({det.get('release')})")
         if idea["buzz"] >= 3:
             why.append(f"mentioned in {idea['buzz']} trending posts/videos")
         idea["why"] = why

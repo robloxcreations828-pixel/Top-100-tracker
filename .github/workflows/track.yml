@@ -54,6 +54,7 @@ jobs:
           WATCH_HOURS: ${{ vars.WATCH_HOURS }}
           MAX_AGE_DAYS: ${{ vars.MAX_AGE_DAYS }}
           STEAM_MIN_PLAYERS: ${{ vars.STEAM_MIN_PLAYERS }}
+          STEAM_MAX_AGE_DAYS: ${{ vars.STEAM_MAX_AGE_DAYS }}
           ROBLOX_OPEN_MAX_PLAYERS: ${{ vars.ROBLOX_OPEN_MAX_PLAYERS }}
           ENTRY_ALERT_MAX_AGE_DAYS: ${{ vars.ENTRY_ALERT_MAX_AGE_DAYS }}
           NEW_LIST_MAX_AGE_DAYS: ${{ vars.NEW_LIST_MAX_AGE_DAYS }}

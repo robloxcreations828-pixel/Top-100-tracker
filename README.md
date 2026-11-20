@@ -13,7 +13,7 @@ Both lists use the same alert rules, and a game in both lists only alerts once.
 - **Dashboard:** a live web page with the top 100, 1-hour growth, sparklines, new entries and the alert history
 
 ## 🔥 Trend Scout (ideas from outside Roblox)
-Every 30 minutes it also checks **Steam's most-played, top-selling and new-release charts** with live player counts. A Steam game is **HOT** when it has 3,000+ players and is growing fast (+50% in 24h), jumped up Steam's most-played chart, or is a new release in the top sellers. For hot games it searches Roblox for look-alikes. If no Roblox look-alike has 2,000+ players, the game is **OPEN** and you get a 🔥 alert: a trend with no big Roblox game yet.
+Every 30 minutes it also checks **Steam's most-played, top-selling, new-release and popular-new-release charts** with live player counts. **Only games released in the last 60 days count**, so evergreen games like CS2 are ignored. A Steam game is **HOT** when it has 3,000+ players and is growing fast (+50% in 24h), jumped up Steam's most-played chart, or is a new release in the top sellers. For hot games it searches Roblox for look-alikes. If no Roblox look-alike has 2,000+ players, the game is **OPEN** and you get a 🔥 alert: a trend with no big Roblox game yet.
 
 The dashboard's **Trend ideas** table ranks every idea by *score = demand − Roblox competition*.
 
@@ -80,6 +80,7 @@ To change the defaults, go to **Settings → Secrets and variables → Actions �
 | `SPIKE_MIN_GAIN` | `500` | Minimum number of extra players |
 | `NEW_LIST_MAX_AGE_DAYS` | `30` | Age limit for the New & Most Played list |
 | `ENTRY_ALERT_MAX_AGE_DAYS` | `10` | Alert when a game this young enters a list (`0` = off) |
+| `STEAM_MAX_AGE_DAYS` | `60` | Only Steam games released within this many days |
 | `STEAM_MIN_PLAYERS` | `3000` | Minimum Steam players for a trend idea |
 | `ROBLOX_OPEN_MAX_PLAYERS` | `2000` | A trend is "open" if no Roblox look-alike has this many players |
 | `MAX_AGE_DAYS` | `30` | Only alert for games created within this many days (`0` = any age) |
