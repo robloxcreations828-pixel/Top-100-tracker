@@ -458,6 +458,7 @@ def build_alert(g, reason, similar):
 STATE = {}
 LISTS = [
     ("trending", "Top Trending", lambda: enrich(fetch_top())),
+    ("upcoming", "Up and Coming", lambda: enrich(fetch_top("up-and-coming"))),
     ("newPlayed2", f"New & Most Played (under {NEW_LIST_MAX_AGE_DAYS:g} days)", lambda: fetch_new_played(STATE)),
 ]
 

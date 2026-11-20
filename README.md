@@ -1,7 +1,8 @@
 # 🚀 Roblox Trend Tracker
 
-Runs 24/7 for free on GitHub. About every 5 minutes it checks two lists:
+Runs 24/7 for free on GitHub. About every 5 minutes it checks three lists:
 - **Top Trending:** Roblox's top 100 trending games
+- **Up and Coming:** Roblox's Up-and-Coming list
 - **New & Most Played:** the most-played games created in the last 30 days. Roblox's own lists only go ~100 deep, so the tracker pools Roblox's Trending, Most Played and Up-and-Coming lists across 10 countries and computer + phone (plus the home page), keeps the ones under 30 days old and ranks them by live players. This list can hold fewer than 100 games.
 
 Both lists use the same alert rules, and a game in both lists only alerts once.
